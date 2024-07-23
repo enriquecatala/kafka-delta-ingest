@@ -143,6 +143,12 @@ async fn main() -> anyhow::Result<()> {
 
             let decompress_gzip = ingest_matches.get_flag("decompress_gzip");
 
+            // Check the dont_apply_schema flag and set the environment variable
+            let dont_apply_schema = ingest_matches.get_flag("dont_apply_schema");
+            if ingest_matches.get_flag("dont_apply_schema") {
+                std::env::set_var("DONT_APPLY_SCHEMA", "true");
+            }
+        
             // ingest_matches.get_flag("end")
             let format = convert_matches_to_message_format(ingest_matches).unwrap();
 
@@ -164,6 +170,7 @@ async fn main() -> anyhow::Result<()> {
                 input_format: format,
                 end_at_last_offsets,
                 decompress_gzip,
+                dont_apply_schema,
             };
 
             tokio::spawn(async move {
@@ -460,6 +467,11 @@ This can be used to provide TLS configuration as in:
                     .env("DECOMPRESS_GZIP")
                     .help("Enable gzip decompression for incoming messages")
                     .action(ArgAction::SetTrue))
+                .arg(Arg::new("dont_apply_schema")
+                    .long("dont_apply_schema")
+                    .env("DONT_APPLY_SCHEMA")
+                    .help("If set, the schema will not be applied and the payload will be saved in a column named 'payload'")
+                    .action(ArgAction::SetTrue)) 
         )
         .arg_required_else_help(true)
 }

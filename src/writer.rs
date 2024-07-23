@@ -3,7 +3,7 @@
 use deltalake_core::arrow::{
     array::{
         as_boolean_array, as_primitive_array, as_struct_array, make_array, Array, ArrayData,
-        StructArray,
+        StructArray,BinaryArray
     },
     buffer::MutableBuffer,
     datatypes::Schema as ArrowSchema,
@@ -48,6 +48,12 @@ type MinAndMaxValues = (
 );
 
 type NullCounts = HashMap<String, ColumnCountStat>;
+
+
+fn dont_apply_schema() -> bool {
+    std::env::var("DONT_APPLY_SCHEMA").is_ok()
+}
+
 
 /// Enum representing an error when calling [`DataWriter`].
 #[derive(thiserror::Error, Debug)]
@@ -198,29 +204,43 @@ impl DataArrowWriter {
         arrow_schema: Arc<ArrowSchema>,
         json_buffer: Vec<Value>,
     ) -> Result<(), Box<DataWriterError>> {
-        let record_batch = record_batch_from_json(arrow_schema.clone(), json_buffer.as_slice())?;
+        if dont_apply_schema() {
+            let payloads: Vec<Vec<u8>> = json_buffer
+                .iter()
+                .map(|v| serde_json::to_vec(v).unwrap())
+                .collect();
+            let array = BinaryArray::from_iter_values(payloads.iter().map(|p| p.as_slice()));
+            let record_batch = RecordBatch::try_new(
+                Arc::new(ArrowSchema::new(vec![Field::new("payload", DataType::Binary, false)])),
+                vec![Arc::new(array)],
+            )?;
 
-        if record_batch.schema() != arrow_schema {
-            return Err(Box::new(DataWriterError::SchemaMismatch {
-                record_batch_schema: record_batch.schema(),
-                expected_schema: arrow_schema,
-            }));
+            self.write_record_batch(partition_columns, record_batch).await
+        } else {
+            let record_batch = record_batch_from_json(arrow_schema.clone(), json_buffer.as_slice())?;
+
+            if record_batch.schema() != arrow_schema {
+                return Err(Box::new(DataWriterError::SchemaMismatch {
+                    record_batch_schema: record_batch.schema(),
+                    expected_schema: arrow_schema,
+                }));
+            }
+
+            let result = self
+                .write_record_batch(partition_columns, record_batch)
+                .await;
+
+            match result {
+                Err(e) => match *e {
+                    DataWriterError::Parquet { source } => {
+                        self.write_partial(partition_columns, arrow_schema, json_buffer, source)
+                            .await
+                    }
+                    _ => Err(e),
+                },
+                Ok(_) => result,
         }
-
-        let result = self
-            .write_record_batch(partition_columns, record_batch)
-            .await;
-
-        match result {
-            Err(e) => match *e {
-                DataWriterError::Parquet { source } => {
-                    self.write_partial(partition_columns, arrow_schema, json_buffer, source)
-                        .await
-                }
-                _ => Err(e),
-            },
-            Ok(_) => result,
-        }
+    }
     }
 
     async fn write_partial(
@@ -344,7 +364,12 @@ impl DataWriter {
 
         // Initialize an arrow schema ref from the delta table schema
         let metadata = table.metadata()?;
-        let arrow_schema = ArrowSchema::try_from(table.schema().unwrap())?;
+        //let arrow_schema = ArrowSchema::try_from(table.schema().unwrap())?;
+        let arrow_schema = if dont_apply_schema() {
+            ArrowSchema::new(vec![Field::new("payload", DataType::Binary, false)])
+        } else {
+            ArrowSchema::try_from(table.schema().unwrap())?
+        };
         let arrow_schema_ref = Arc::new(arrow_schema);
         let partition_columns = metadata.partition_columns.clone();
 

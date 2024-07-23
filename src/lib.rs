@@ -296,6 +296,8 @@ pub struct IngestOptions {
     pub end_at_last_offsets: bool,
     /// Assume that message payloads are gzip compressed and decompress them before processing.
     pub decompress_gzip: bool,
+    /// If this is true, it just takes the content of the message and avoid aplying schema. Just dump the content in a column named payload
+    pub dont_apply_schema: bool,
 }
 
 impl Default for IngestOptions {
@@ -318,6 +320,7 @@ impl Default for IngestOptions {
             input_format: MessageFormat::DefaultJson,
             end_at_last_offsets: false,
             decompress_gzip: false,
+            dont_apply_schema: false,
         }
     }
 }
